@@ -188,9 +188,15 @@ run opts = withConsole $ \console -> do
   where
     isTestBench u = maybe False (\c -> "test:" `T.isPrefixOf` c || "bench:" `T.isPrefixOf` c)
                           (puComponent u)
-    emitSegment console r =
-        let emit = if rrOutcome r == ReplOk then cOut else cErr
-        in mapM_ (emit console) (T.lines (rrOutput r))
+    -- GHC diagnostics go to stderr even when the check passed — warnings in
+    -- an Ok segment must reach stderr-parsing consumers (Leksah's Errors
+    -- pane).  Died/timed-out segments are cabal/tmux failure text, not GHC
+    -- output: keep the whole segment on stderr.
+    emitSegment console r
+      | rrOutcome r `elem` [ReplOk, ReplFailed] =
+          mapM_ (\(diag, l) -> (if diag then cErr else cOut) console l)
+                (classifyDiagnostics (T.lines (rrOutput r)))
+      | otherwise = mapM_ (cErr console) (T.lines (rrOutput r))
     describeBad ReplFailed  = "type errors (see above)"
     describeBad ReplDied    = "the repl exited (cabal error? see above / the tmux window)"
     describeBad ReplTimeout = "timed out waiting for the repl (busy? attach: tmux attach -t ffcabal)"

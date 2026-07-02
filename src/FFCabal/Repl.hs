@@ -87,6 +87,26 @@ checkUnitRepl console projRoot stateDir envFile cabalOpts timeoutSecs u = do
         -- configuration (PATH!) as the cabal that planned the build.
         replCmd = ". " <> shQuote envFile <> " ; exec cabal repl "
                   <> unwords (map shQuote (name : "--repl-options=-ferror-spans" : cabalOpts))
+        -- GHCi's bytecode backend rejects @foreign export@ declarations, so a
+        -- component containing them can never pass a plain repl check.  Detect
+        -- that specific failure and restart the repl with @-fobject-code@ (an
+        -- accepted backend).  The flag is sticky for the life of the ghci
+        -- session, so reused repls keep it; a UnitId-change respawn drops it
+        -- and this retry re-adds it (one wasted start per config change).
+        objCodeRetry wid logF r
+          | rrOutcome r == ReplFailed
+          , "Illegal foreign declaration" `T.isInfixOf` rrOutput r = do
+            cOut console $ "ffcabal: " <> target
+                           <> " has foreign exports — restarting repl with -fobject-code"
+            off <- fileSize logF
+            respawnReplWindow wid projRoot
+                (replCmd <> " " <> shQuote "--repl-options=-fobject-code") >>= \case
+              Nothing -> return r
+              Just pane -> do
+                recordIdentity wid logF
+                pipePane pane logF
+                finishCheck console False name pane logF off timeoutSecs
+          | otherwise = return r
     wins <- listReplWindows
     let mine = find (\w -> winDir w == projRoot && winName w == name) wins
     case mine of
@@ -106,6 +126,7 @@ checkUnitRepl console projRoot stateDir envFile cabalOpts timeoutSecs u = do
         pipePane pane logF
         sendKeys pane ":reload"
         finishCheck console True name pane logF off timeoutSecs
+            >>= objCodeRetry (winId w) logF
       Just w -> do
         -- Stale (UnitId changed) or dead: restart the repl in the same window.
         cOut console $ "ffcabal: checking " <> target <> " (repl restarted: "
@@ -119,6 +140,7 @@ checkUnitRepl console projRoot stateDir envFile cabalOpts timeoutSecs u = do
             -- the nonce (sent by finishCheck) queues in the tty and runs
             -- once ghci finishes its initial load
             finishCheck console False name pane logFile off timeoutSecs
+                >>= objCodeRetry (winId w) logFile
       Nothing -> do
         cOut console $ "ffcabal: checking " <> target <> " (starting repl in tmux; attach: tmux attach -t "
                        <> T.pack sessionName <> ")"
@@ -129,6 +151,7 @@ checkUnitRepl console projRoot stateDir envFile cabalOpts timeoutSecs u = do
             recordIdentity wid logFile
             pipePane pane logFile
             finishCheck console False name pane logFile off timeoutSecs
+                >>= objCodeRetry wid logFile
   where
     recordIdentity wid logFile = do
         setWinOption wid "@ffcabal_unitid" (T.unpack (puId u))

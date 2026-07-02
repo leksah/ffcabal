@@ -34,7 +34,7 @@ import System.Process
 
 import FFCabal.Graph
        (localDeps, reachable, resolveTargets, topoOrder)
-import FFCabal.Output (stripAnsi)
+import FFCabal.Output (classifyDiagnostics, stripAnsi)
 import FFCabal.Plan
        (PlanUnit(..), isCheckableComponent, isLocalUnit, readPlan, unitTarget)
 import FFCabal.Repl (ReplOutcome(..), lastVerdict, nonceMatchesLine)
@@ -67,6 +67,42 @@ main = do
     checkEq "NEL (ESC E) -> newline" (stripAnsi ("a" <> esc "E" <> "b")) "a\nb"
     checkEq "IND (ESC D) -> newline" (stripAnsi ("a" <> esc "D" <> "b")) "a\nb"
     checkEq "other ESC x dropped" (stripAnsi ("a" <> esc "=" <> "b")) "ab"
+
+    putStrLn "== FFCabal.Output.classifyDiagnostics =="
+    let diags = map fst . classifyDiagnostics
+    checkEq "chatter only" (diags ["GHCi, version 9.14.1", "ghci> :reload", "Ok, 27 modules reloaded."])
+        [False, False, False]
+    checkEq "warning block to stderr, chatter around it stays out"
+        (classifyDiagnostics
+            [ "[ 3 of 27] Compiling IDE.Foo ( src/IDE/Foo.hs, interpreted )"
+            , "src/IDE/Foo.hs:10:1: warning: [-Wunused-imports]"
+            , "    The import of \8216Data.Maybe\8217 is redundant"
+            , "   |"
+            , "10 | import Data.Maybe"
+            , "   | ^^^^^^^^^^^^^^^^^"
+            , ""
+            , "Ok, 27 modules reloaded."
+            ])
+        [ (False, "[ 3 of 27] Compiling IDE.Foo ( src/IDE/Foo.hs, interpreted )")
+        , (True,  "src/IDE/Foo.hs:10:1: warning: [-Wunused-imports]")
+        , (True,  "    The import of \8216Data.Maybe\8217 is redundant")
+        , (True,  "   |")
+        , (True,  "10 | import Data.Maybe")
+        , (True,  "   | ^^^^^^^^^^^^^^^^^")
+        , (True,  "")
+        , (False, "Ok, 27 modules reloaded.")
+        ]
+    checkEq "error header (with GHC error code) starts a block"
+        (diags ["src/A.hs:2:5: error: [GHC-83865]", "    Couldn't match", "done"])
+        [True, True, False]
+    checkEq "no-location error header"
+        (diags ["<no location info>: error:", "    ghc bug?", "next"])
+        [True, True, False]
+    checkEq "blank line inside a block does not end it"
+        (diags ["a.hs:1:1: warning: x", "", "  more", "Ok, one module loaded."])
+        [True, True, True, False]
+    checkEq "indented line without a header is chatter"
+        (diags ["  just indented banner text"]) [False]
 
     putStrLn "== FFCabal.Tmux.shQuote =="
     checkEq "simple" (shQuote "abc") "'abc'"

@@ -15,6 +15,7 @@ module FFCabal.Output
   , cOut
   , cErr
   , stripAnsi
+  , classifyDiagnostics
   ) where
 
 import Control.Concurrent (forkIO)
@@ -51,6 +52,32 @@ withConsole body = do
 cOut, cErr :: Console -> Text -> IO ()
 cOut (Console chan) = writeChan chan . MsgOut
 cErr (Console chan) = writeChan chan . MsgErr
+
+-- | Split a captured repl segment into GHC diagnostics and chatter.  GHC
+-- writes diagnostics to stderr, but a PTY capture merges the streams, so we
+-- re-split by shape: a diagnostic starts with a @file:span: error:/warning:@
+-- header and continues over indented lines (including the @NN | code@
+-- gutter) until the first non-indented line.  'True' = diagnostic — emit it
+-- on stderr, where build tools (and Leksah's error parser) expect compiler
+-- diagnostics; chatter (ghci banner, echoed commands, @Ok, … loaded.@) stays
+-- on stdout so it can't be mistaken for part of a diagnostic.
+classifyDiagnostics :: [Text] -> [(Bool, Text)]
+classifyDiagnostics = go False
+  where
+    go _ [] = []
+    go inDiag (l : ls)
+      | isHeader l         = (True, l)  : go True ls
+      | inDiag && isCont l = (True, l)  : go True ls
+      | otherwise          = (False, l) : go False ls
+    isHeader l =
+        not (" " `T.isPrefixOf` l)
+        && any (`T.isInfixOf` l) [": error:", ": warning:", ": error [", ": warning ["]
+    -- Continuation: indented message/caret lines, the code line of the
+    -- gutter (@10 | …@ — starts with the line number, not a space), and the
+    -- blank line GHC prints between diagnostics.
+    isCont l = T.null (T.strip l) || " " `T.isPrefixOf` l || isGutter l
+    isGutter l = case T.span isDigit l of
+        (d, r) -> not (T.null d) && " |" `T.isPrefixOf` r
 
 -- | Drop ANSI escape sequences (CSI and OSC) and normalise carriage returns —
 -- tmux @pipe-pane@ captures the raw PTY byte stream, including GHC's colours.
