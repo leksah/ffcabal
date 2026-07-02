@@ -1,0 +1,74 @@
+cabal-version: 3.4
+name: ffcabal
+version: 0.1.0.0
+build-type: Simple
+license: MIT
+license-file: LICENSE
+author: Hamish Mackenzie
+maintainer: Hamish.K.Mackenzie@gmail.com
+synopsis: Fail-fast cabal wrapper: cached tmux repl checks, then parallel builds
+description:
+    Type-checks each local component in a cached @cabal repl@ (@:reload@)
+    before building, in dependency order, so the first compile error surfaces
+    in seconds.  Repls live in tmux (session @ffcabal@) so they persist between
+    runs and are usable interactively.  After a component's check passes its
+    real @cabal build@ runs in the background, in parallel where dependencies
+    allow, followed by one final @cabal build@ of the requested targets.
+category: Development
+
+source-repository head
+    type: git
+    location: https://github.com/leksah/leksah
+
+library
+    hs-source-dirs: src
+    exposed-modules:
+        FFCabal.Build
+        FFCabal.Graph
+        FFCabal.Output
+        FFCabal.Plan
+        FFCabal.Repl
+        FFCabal.Tmux
+    build-depends:
+        aeson,
+        base,
+        bytestring,
+        containers,
+        directory,
+        filepath,
+        process,
+        text,
+        time,
+        unix
+    ghc-options: -Wall
+    default-language: Haskell2010
+
+executable ffcabal
+    main-is: Main.hs
+    hs-source-dirs: app
+    build-depends:
+        base,
+        containers,
+        directory,
+        ffcabal,
+        filepath,
+        text,
+        unix
+    ghc-options: -threaded -Wall
+    default-language: Haskell2010
+
+test-suite ffcabal-test
+    type: exitcode-stdio-1.0
+    main-is: Test.hs
+    hs-source-dirs: test
+    build-depends:
+        base,
+        containers,
+        directory,
+        ffcabal,
+        filepath,
+        process,
+        text,
+        unix
+    ghc-options: -threaded -Wall
+    default-language: Haskell2010
