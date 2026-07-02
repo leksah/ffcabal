@@ -12,6 +12,7 @@
 -- zero dependencies beyond ffcabal's own.
 module Main (main) where
 
+import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, finally, try)
 import Control.Monad (unless, void)
 import Data.IORef
@@ -323,12 +324,46 @@ integrationTests check = do
         check "int: fixed build exits 0" (c3 == ExitSuccess)
         check "int: cached repl reused after fix" (":reload in cached repl" `isInfixOf` t3)
 
-        -- run 4: version bump changes liba's UnitId -> repl respawned
+        -- run 4: version bump changes liba's UnitId -> repl respawned in place,
+        -- and the OLD repl process must be KILLED (respawn-window -k), not
+        -- leaked — a leak would accumulate a live ghci per config change.
+        let panePids = do
+                (_, out, _) <- readProcessWithExitCode "tmux"
+                    ["-L", sock, "list-windows", "-t", "ffcabal", "-F", "#{window_name}\t#{pane_pid}"] ""
+                return [ (n, pid) | l <- lines out
+                       , let (n, r) = break (== '\t') l
+                       , pid@(_ : _) <- [drop 1 r] ]
+            libaWin = "liba:lib:liba"
+            alive pid = do
+                (c, _, _) <- readProcessWithExitCode "kill" ["-0", pid] ""
+                return (c == ExitSuccess)
+            waitDead n pid
+              | n <= (0 :: Int) = return False
+              | otherwise = alive pid >>= \case
+                    False -> return True
+                    True  -> threadDelay 100000 >> waitDead (n - 1) pid
+        pidsBefore <- panePids
+        let oldPid = lookup libaWin pidsBefore
+        check "int: old repl pid captured" (oldPid /= Nothing)
         writeFile (proj </> "liba" </> "liba.cabal") (libaCabal "0.2.0.0")
         (c4, o4, e4) <- ff ["build", "exe:exeb"]
         let t4 = o4 <> e4
         check "int: unitid change exits 0" (c4 == ExitSuccess)
         check "int: unitid change respawns repl" ("repl restarted: configuration changed" `isInfixOf` t4)
+        pidsAfter <- panePids
+        check "int: liba window not duplicated"
+            (length (filter ((== libaWin) . fst) pidsAfter) == 1)
+        check "int: respawned repl is a new process"
+            (lookup libaWin pidsAfter /= Nothing && lookup libaWin pidsAfter /= oldPid)
+        oldDead <- maybe (return False) (waitDead 50) oldPid
+        check "int: old repl process killed" oldDead
+        -- nothing left in the old process group either (children like ghc)
+        groupGone <- case oldPid of
+            Nothing -> return False
+            Just p  -> do
+                (c, _, _) <- readProcessWithExitCode "pgrep" ["-g", p] ""
+                return (c /= ExitSuccess)   -- no members found
+        check "int: old repl process group empty" groupGone
 
     resolveFfcabal = lookupEnv "FFCABAL_BIN" >>= \case
         Just p | not (null p) -> do
