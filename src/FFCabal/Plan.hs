@@ -11,15 +11,24 @@ module FFCabal.Plan
   , isLocalUnit
   , isCheckableComponent
   , unitTarget
+  , configHash
   ) where
 
 import Data.Aeson
        (FromJSON(..), eitherDecodeFileStrict', withObject, (.:), (.:?),
         (.!=), Value(Object))
-import Data.Maybe (fromMaybe)
+import Data.Bits (xor)
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BS8 (pack)
+import Data.List (foldl', nub, sort)
+import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
-import System.FilePath ((</>))
+import Data.Traversable (forM)
+import Data.Word (Word64)
+import System.Directory (doesDirectoryExist, doesFileExist, listDirectory)
+import System.FilePath ((</>), isAbsolute, takeExtension)
+import Text.Printf (printf)
 
 data PlanUnit = PlanUnit
   { puId         :: Text            -- ^ UnitId, e.g. @ltk-0.16.2.0-inplace@
@@ -75,3 +84,32 @@ unitTarget u = case fromMaybe "" (puComponent u) of
     c | T.null c  -> p
       | otherwise -> p <> ":" <> c
   where p = puPkgName u
+
+-- | A hash over everything that can change a component's ghci session
+-- WITHOUT changing its UnitId: every local package's .cabal file plus the
+-- cabal.project(.local/.freeze) files.  Inplace UnitIds are stable across
+-- cabal-file edits (adding a module, changing exposed-modules), but a cached
+-- ghci never re-reads them — cross-package imports then fail against the
+-- stale module lists.  The hash is recorded on each repl window
+-- (@\@ffcabal_confhash@); a mismatch respawns the repl.
+configHash :: FilePath -> [PlanUnit] -> IO String
+configHash root units = do
+    cabalFiles <- fmap concat . forM (nub (mapMaybe puSrcPath units)) $ \d -> do
+        let dir = if isAbsolute d then d else root </> d
+        ok <- doesDirectoryExist dir
+        if ok
+          then map (dir </>) . filter ((== ".cabal") . takeExtension)
+                 <$> listDirectory dir
+          else return []
+    let projFiles = map (root </>)
+            ["cabal.project", "cabal.project.local", "cabal.project.freeze"]
+    chunks <- forM (sort (nub (projFiles ++ cabalFiles))) $ \f ->
+        doesFileExist f >>= \case
+            False -> return mempty
+            True  -> (BS8.pack f <>) <$> BS.readFile f
+    return (printf "%016x" (fnv1a (BS.concat chunks)))
+
+-- | FNV-1a (64-bit) — no crypto needed, just cheap change detection.
+fnv1a :: BS.ByteString -> Word64
+fnv1a = BS.foldl' step 0xcbf29ce484222325
+  where step h b = (h `xor` fromIntegral b) * 0x100000001b3

@@ -8,6 +8,7 @@
 --   [@\@ffcabal_unitid@]   the plan UnitId the repl was started for
 --   [@\@ffcabal_dir@]      the project root
 --   [@\@ffcabal_log@]      the pipe-pane capture file
+--   [@\@ffcabal_confhash@] the project config hash (see 'FFCabal.Plan.configHash')
 --
 -- All tmux calls are argv-level ('readProcessWithExitCode'), so names never
 -- pass through a shell; only the pane's own command line is shell-quoted.
@@ -68,13 +69,14 @@ ensureSession = do
         tmux ["new-session", "-d", "-s", sessionName]
 
 data Win = Win
-  { winId     :: String   -- ^ @\@n@
-  , winPane   :: String   -- ^ @%n@
-  , winName   :: String
-  , winDead   :: Bool
-  , winUnitId :: String   -- ^ @\@ffcabal_unitid@ ("" if unset)
-  , winDir    :: String   -- ^ @\@ffcabal_dir@ ("" if unset)
-  , winLog    :: String   -- ^ @\@ffcabal_log@ ("" if unset)
+  { winId       :: String   -- ^ @\@n@
+  , winPane     :: String   -- ^ @%n@
+  , winName     :: String
+  , winDead     :: Bool
+  , winUnitId   :: String   -- ^ @\@ffcabal_unitid@ ("" if unset)
+  , winDir      :: String   -- ^ @\@ffcabal_dir@ ("" if unset)
+  , winLog      :: String   -- ^ @\@ffcabal_log@ ("" if unset)
+  , winConfHash :: String   -- ^ @\@ffcabal_confhash@ ("" if unset)
   } deriving Show
 
 -- | The ffcabal session's windows (with our identity options).
@@ -84,14 +86,15 @@ listReplWindows =
             , intercalate "\t"
                 [ "#{window_id}", "#{pane_id}", "#{pane_dead}"
                 , "#{@ffcabal_unitid}", "#{@ffcabal_dir}", "#{@ffcabal_log}"
-                , "#{window_name}" ] ] >>= \case
+                , "#{@ffcabal_confhash}", "#{window_name}" ] ] >>= \case
       Nothing  -> return []
       Just out -> return . mapMaybe parse $ lines out
   where
     parse l = case splitOn '\t' l of
-        (wid : pane : dead : unit : dir : logf : nameParts) ->
+        (wid : pane : dead : unit : dir : logf : ch : nameParts) ->
             Just Win { winId = wid, winPane = pane, winDead = dead == "1"
                      , winUnitId = unit, winDir = dir, winLog = logf
+                     , winConfHash = ch
                      , winName = intercalate "\t" nameParts }
         _ -> Nothing
     splitOn c s = case break (== c) s of

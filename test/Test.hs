@@ -401,6 +401,22 @@ integrationTests check = do
                 return (c /= ExitSuccess)   -- no members found
         check "int: old repl process group empty" groupGone
 
+        -- run 5: a cabal-file edit that does NOT change the UnitId (inplace
+        -- ids are stable across cabal edits) must still respawn the repl —
+        -- a cached ghci never re-reads module lists (the confhash check).
+        appendFile (proj </> "liba" </> "liba.cabal") "\n-- confhash test\n"
+        (c5, o5, e5) <- ff ["build", "exe:exeb"]
+        let t5 = o5 <> e5
+        check "int: cabal-file edit exits 0" (c5 == ExitSuccess)
+        check "int: cabal-file edit respawns repl (confhash)"
+            ("repl restarted: configuration changed" `isInfixOf` t5)
+        -- run 6: unchanged again -> cached repls
+        (c6, o6, e6) <- ff ["build", "exe:exeb"]
+        let t6 = o6 <> e6
+        check "int: post-edit build exits 0" (c6 == ExitSuccess)
+        check "int: repl cached again after confhash settles"
+            (":reload in cached repl" `isInfixOf` t6)
+
     resolveFfcabal = lookupEnv "FFCABAL_BIN" >>= \case
         Just p | not (null p) -> do
             ok <- doesFileExist p

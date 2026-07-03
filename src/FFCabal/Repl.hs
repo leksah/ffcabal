@@ -76,9 +76,10 @@ checkUnitRepl
   -> FilePath      -- ^ env file (see 'writeEnvFile')
   -> [String]      -- ^ extra cabal options (passed to @cabal repl@)
   -> Int           -- ^ timeout (seconds)
+  -> String        -- ^ project config hash (see 'FFCabal.Plan.configHash')
   -> PlanUnit
   -> IO ReplResult
-checkUnitRepl console projRoot stateDir envFile cabalOpts timeoutSecs u = do
+checkUnitRepl console projRoot stateDir envFile cabalOpts timeoutSecs confHash u = do
     createDirectoryIfMissing True stateDir
     let target  = unitTarget u
         name    = T.unpack target
@@ -110,7 +111,8 @@ checkUnitRepl console projRoot stateDir envFile cabalOpts timeoutSecs u = do
     wins <- listReplWindows
     let mine = find (\w -> winDir w == projRoot && winName w == name) wins
     case mine of
-      Just w | not (winDead w), winUnitId w == T.unpack (puId u) -> do
+      Just w | not (winDead w), winUnitId w == T.unpack (puId u)
+             , winConfHash w == confHash -> do
         -- Reuse: interrupt anything running / clear a half-typed line, :reload.
         cOut console $ "ffcabal: checking " <> target <> " (:reload in cached repl)"
         let pane = winPane w
@@ -157,6 +159,7 @@ checkUnitRepl console projRoot stateDir envFile cabalOpts timeoutSecs u = do
         setWinOption wid "@ffcabal_unitid" (T.unpack (puId u))
         setWinOption wid "@ffcabal_dir" projRoot
         setWinOption wid "@ffcabal_log" logFile
+        setWinOption wid "@ffcabal_confhash" confHash
 
 -- | Send the nonce fence, wait for it (or death/timeout), extract the
 -- segment and the GHCi verdict.

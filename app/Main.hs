@@ -122,6 +122,9 @@ run opts = withConsole $ \console -> do
     cOut console $ "ffcabal: " <> T.pack (show (length ordered))
                    <> " component(s), dependency order: "
                    <> T.intercalate ", " (map unitTarget ordered)
+    -- Cabal-file edits don't change inplace UnitIds, but a cached ghci never
+    -- re-reads module lists — hash the config files and respawn on mismatch.
+    confHash <- configHash cwd locals
 
     case oCmd opts of
       CmdBuild -> do
@@ -143,7 +146,7 @@ run opts = withConsole $ \console -> do
                     depsOk <- if oReplOnly opts then return True
                               else and <$> mapM (waitUnit env) (localDepIds u)
                     if not depsOk then return False else do
-                        r <- checkUnitRepl console cwd stateDir envFile cabalOpts (oTimeout opts) u
+                        r <- checkUnitRepl console cwd stateDir envFile cabalOpts (oTimeout opts) confHash u
                         emitSegment console r
                         case rrOutcome r of
                           ReplOk -> do
@@ -174,7 +177,7 @@ run opts = withConsole $ \console -> do
             Right several -> die console $ "ffcabal: target matches several components ("
                 <> T.intercalate ", " (map unitTarget several) <> "); pick one"
             Left err      -> die console ("ffcabal: " <> err)
-        r <- checkUnitRepl console cwd stateDir envFile cabalOpts (oTimeout opts) u
+        r <- checkUnitRepl console cwd stateDir envFile cabalOpts (oTimeout opts) confHash u
         emitSegment console r
         case rrOutcome r of
           ReplOk -> do
