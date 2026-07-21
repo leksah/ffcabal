@@ -21,6 +21,8 @@ source-repository head
     location: https://github.com/leksah/leksah
 
 library
+    if impl(ghcjs) || arch(javascript) || os(windows)
+      buildable: False
     hs-source-dirs: src
     exposed-modules:
         FFCabal.Build
@@ -44,6 +46,8 @@ library
     default-language: Haskell2010
 
 executable ffcabal
+    if impl(ghcjs) || arch(javascript) || os(windows)
+      buildable: False
     main-is: Main.hs
     hs-source-dirs: app
     build-depends:
@@ -58,6 +62,8 @@ executable ffcabal
     default-language: Haskell2010
 
 test-suite ffcabal-test
+    if impl(ghcjs) || arch(javascript) || os(windows)
+      buildable: False
     type: exitcode-stdio-1.0
     main-is: Test.hs
     hs-source-dirs: test
